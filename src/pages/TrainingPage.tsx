@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpen, ChevronRight, Dumbbell, Pencil, Play, Plus, TriangleAlert } from "lucide-react";
-import { Badge, Button, Card, EmptyState, IconButton, Notice, Page, PageHeader, SectionTitle, Sheet, Toggle, cx, useToast } from "../components/ui";
+import { ExerciseThumb } from "../components/ExerciseAnimation";
+import { Badge, Button, Card, Chip, EmptyState, IconButton, Notice, Page, PageHeader, SectionTitle, Sheet, Toggle, cx, useToast } from "../components/ui";
 import { ExercisePicker } from "../components/ExercisePicker";
 import { useLiveQuery } from "../hooks";
 import {
@@ -18,9 +19,27 @@ import {
   startSession,
   updateProgram,
 } from "../db/repo/training";
-import { PROGRAM_TEMPLATES } from "../data/programTemplates";
+import {
+  daysPerWeek,
+  GOAL_LABEL,
+  LEVEL_LABEL,
+  PLACE_LABEL,
+  PROGRAM_TEMPLATES,
+  type ProgramGoal,
+  type ProgramLevel,
+  type ProgramPlace,
+  type ProgramTemplate,
+} from "../data/programTemplates";
+import { getTrainingSetup } from "../db/repo/settings";
+import type { Equipment, Exercise } from "../db/types";
 import { formatTime, relativeDayLabel, WEEKDAY_SHORT } from "../lib/date";
 import { fmtInt } from "../lib/format";
+import { EQUIPMENT_LABEL } from "../lib/labels";
+
+function missingEquipment(t: ProgramTemplate, exercises: Record<string, Exercise>, mine: Equipment[]): Equipment[] {
+  const needed = new Set(t.days.flatMap((d) => d.exercises.map((e) => exercises[e.exerciseId]?.equipment)).filter((e): e is Equipment => !!e));
+  return [...needed].filter((e) => !mine.includes(e));
+}
 
 export default function TrainingPage() {
   const navigate = useNavigate();
@@ -46,8 +65,18 @@ export default function TrainingPage() {
         return [s.id, { sets: ss.filter((x) => x.completed).length, volume: ss.reduce((v, x) => v + setVolume(x), 0) }];
       }),
     );
-    return { programs, inProgress, completed, stats, detail, exercises };
+    const setup = await getTrainingSetup();
+    return { programs, inProgress, completed, stats, detail, exercises, setup };
   });
+
+  const [goal, setGoal] = useState<"all" | ProgramGoal>("all");
+  const [placeChoice, setPlace] = useState<"all" | ProgramPlace>();
+  const [level, setLevel] = useState<"all" | ProgramLevel>("all");
+  const savedPlace = data?.setup.place;
+  const place = placeChoice ?? (savedPlace && savedPlace !== "both" ? savedPlace : "all");
+  const templates = PROGRAM_TEMPLATES.filter(
+    (t) => (goal === "all" || t.goal === goal) && (place === "all" || t.place === place) && (level === "all" || t.level === level),
+  );
 
   const begin = async (dayId?: string) => {
     if (data?.inProgress) return navigate(`/training/session/${data.inProgress.id}`);
@@ -216,26 +245,69 @@ export default function TrainingPage() {
       <Sheet open={templatesOpen} onClose={() => setTemplatesOpen(false)} title="Program baru">
         <p className="mb-3 text-sm text-ink-400">Template hanya titik awal — sesuaikan latihan, set, dan jadwal dengan pengalaman, alat, dan kondisi kamu.</p>
         <div className="space-y-2">
-          {PROGRAM_TEMPLATES.map((t) => (
-            <Card
-              key={t.key}
-              onClick={async () => {
-                const id = await createProgramFromTemplate(t.key);
-                setTemplatesOpen(false);
-                toast("Program dibuat & diaktifkan");
-                navigate(`/training/program/${id}`);
-              }}
-            >
-              <div className="flex items-center gap-2">
-                <span className="font-semibold">{t.name}</span>
-                <Badge>{t.level}</Badge>
-              </div>
-              <p className="mt-1 text-sm text-ink-400">{t.description}</p>
-              <p className="mt-2 text-xs text-ink-500">
-                {t.days.map((d) => `${d.name}: ${d.exercises.map((e) => data?.exercises[e.exerciseId]?.name).filter(Boolean).slice(0, 3).join(", ")}…`).join(" · ")}
-              </p>
-            </Card>
-          ))}
+          <div className="no-scrollbar -mx-5 flex gap-1.5 overflow-x-auto px-5">
+            <Chip active={goal === "all"} onClick={() => setGoal("all")}>
+              Semua tujuan
+            </Chip>
+            {(Object.entries(GOAL_LABEL) as [ProgramGoal, string][]).map(([k, v]) => (
+              <Chip key={k} active={goal === k} onClick={() => setGoal(k)}>
+                {v}
+              </Chip>
+            ))}
+          </div>
+          <div className="no-scrollbar -mx-5 flex gap-1.5 overflow-x-auto px-5">
+            <Chip active={place === "all"} onClick={() => setPlace("all")}>
+              Gym & rumah
+            </Chip>
+            {(Object.entries(PLACE_LABEL) as [ProgramPlace, string][]).map(([k, v]) => (
+              <Chip key={k} active={place === k} onClick={() => setPlace(k)}>
+                {v}
+              </Chip>
+            ))}
+            <span className="w-2 shrink-0" />
+            <Chip active={level === "all"} onClick={() => setLevel("all")}>
+              Semua level
+            </Chip>
+            {(Object.entries(LEVEL_LABEL) as [ProgramLevel, string][]).map(([k, v]) => (
+              <Chip key={k} active={level === k} onClick={() => setLevel(k)}>
+                {v}
+              </Chip>
+            ))}
+          </div>
+          {templates.map((t) => {
+            const missing = data ? missingEquipment(t, data.exercises, data.setup.equipment) : [];
+            return (
+              <Card
+                key={t.key}
+                onClick={async () => {
+                  const id = await createProgramFromTemplate(t.key);
+                  setTemplatesOpen(false);
+                  toast("Program dibuat & diaktifkan");
+                  navigate(`/training/program/${id}`);
+                }}
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 font-semibold">{t.name}</span>
+                  <Badge tone="lime">{GOAL_LABEL[t.goal]}</Badge>
+                  <Badge tone="info">{PLACE_LABEL[t.place]}</Badge>
+                  <Badge>{LEVEL_LABEL[t.level]}</Badge>
+                </div>
+                <p className="mt-1 text-sm text-ink-400">{t.description}</p>
+                <div className="mt-2 flex items-center gap-1">
+                  {[...new Set(t.days.flatMap((d) => d.exercises.map((e) => e.exerciseId)))].slice(0, 6).map((id) => (
+                    <ExerciseThumb key={id} exerciseId={id} size={36} />
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-ink-500">
+                  {daysPerWeek(t)}×/minggu · ±{t.minutes} menit · {t.days.map((d) => d.name).join(", ")}
+                </p>
+                {missing.length > 0 && (
+                  <p className="mt-1 text-xs text-amber-300">Butuh alat yang belum kamu tandai: {missing.map((e) => EQUIPMENT_LABEL[e]).join(", ")}</p>
+                )}
+              </Card>
+            );
+          })}
+          {!templates.length && <p className="py-4 text-center text-sm text-ink-400">Tidak ada template untuk filter ini.</p>}
           <Card
             onClick={async () => {
               const id = await createBlankProgram("Program custom");

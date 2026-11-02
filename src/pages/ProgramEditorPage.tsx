@@ -18,8 +18,10 @@ import {
   updateProgramDay,
   updateProgramExercise,
 } from "../db/repo/training";
-import type { ProgramExercise } from "../db/types";
+import type { ExerciseMetric, ProgramExercise } from "../db/types";
 import { WEEKDAY_SHORT } from "../lib/date";
+import { metricOf } from "../lib/sets";
+import { ExerciseThumb } from "../components/ExerciseAnimation";
 
 export default function ProgramEditorPage() {
   const { id } = useParams();
@@ -107,6 +109,7 @@ export default function ProgramEditorPage() {
                   key={pe.id}
                   pe={pe}
                   name={exercises[pe.exerciseId]?.name ?? "?"}
+                  metric={metricOf(exercises[pe.exerciseId])}
                   first={i === 0}
                   last={i === list.length - 1}
                 />
@@ -149,11 +152,13 @@ export default function ProgramEditorPage() {
   );
 }
 
-function ExerciseRow({ pe, name, first, last }: { pe: ProgramExercise; name: string; first: boolean; last: boolean }) {
+function ExerciseRow({ pe, name, metric, first, last }: { pe: ProgramExercise; name: string; metric: ExerciseMetric; first: boolean; last: boolean }) {
   const patch = (p: Partial<ProgramExercise>) => updateProgramExercise(pe.id, p);
+  const unit = metric === "reps" ? "Rep" : metric === "time" ? "Detik" : "Menit";
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-3">
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-2">
+        <ExerciseThumb exerciseId={pe.exerciseId} size={40} />
         <span className="flex-1 truncate font-semibold">{name}</span>
         <button disabled={first} aria-label="Naik" className="grid size-8 place-items-center rounded-full text-ink-400 disabled:opacity-30" onClick={() => moveProgramExercise(pe.id, -1)}>
           <ArrowUp className="size-4" />
@@ -169,21 +174,23 @@ function ExerciseRow({ pe, name, first, last }: { pe: ProgramExercise; name: str
         <Mini label="Set">
           <NumberInput value={pe.targetSets} onChange={(v) => v && patch({ targetSets: Math.max(1, Math.round(v)) })} />
         </Mini>
-        <Mini label="Rep min">
+        <Mini label={`${unit} min`}>
           <NumberInput value={pe.repMin} onChange={(v) => v && patch({ repMin: Math.round(v) })} />
         </Mini>
-        <Mini label="Rep max">
+        <Mini label={`${unit} max`}>
           <NumberInput value={pe.repMax} onChange={(v) => v && patch({ repMax: Math.round(v) })} />
         </Mini>
         <Mini label="Rest (dtk)">
           <NumberInput value={pe.restSeconds} onChange={(v) => v != null && patch({ restSeconds: Math.round(v) })} />
         </Mini>
       </div>
-      <div className="mt-1.5">
-        <Mini label="Target beban (opsional, kg)">
-          <NumberInput value={pe.targetWeightKg} onChange={(v) => patch({ targetWeightKg: v })} placeholder="ikuti sesi terakhir" />
-        </Mini>
-      </div>
+      {metric === "reps" && (
+        <div className="mt-1.5">
+          <Mini label="Target beban (opsional, kg)">
+            <NumberInput value={pe.targetWeightKg} onChange={(v) => patch({ targetWeightKg: v })} placeholder="ikuti sesi terakhir" />
+          </Mini>
+        </div>
+      )}
     </div>
   );
 }

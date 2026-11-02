@@ -60,4 +60,22 @@ describe("parseAiFoodResult", () => {
     expect(() => parseAiFoodResult('{"calories_kcal":-1,"protein_g":1,"carbs_g":1,"fat_g":1}')).toThrow("calories_kcal");
     expect(() => parseAiFoodResult("tidak ada json")).toThrow();
   });
+
+  it("keeps per-component grams and drops placeholder rows", () => {
+    const r = parseAiFoodResult(
+      JSON.stringify({
+        food_name: "Nasi ayam",
+        calories_kcal: 650,
+        protein_g: 38,
+        carbs_g: 75,
+        fat_g: 20,
+        components: [
+          { name: "Nasi putih", estimated_portion: "1 centong (~100 g)", grams: 100, calories_kcal: 130 },
+          { name: "string" },
+        ],
+      }),
+    );
+    expect(r.components).toHaveLength(1);
+    expect(r.components![0]).toMatchObject({ name: "Nasi putih", grams: 100, calories_kcal: 130 });
+  });
 });

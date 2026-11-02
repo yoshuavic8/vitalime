@@ -43,12 +43,14 @@ export async function buildCsv(kind: CsvKind): Promise<File> {
           setNumber: set.setNumber,
           weightKg: set.weightKg,
           reps: set.reps,
+          durationSec: set.durationSec,
+          distanceKm: set.distanceKm,
           rpe: set.rpe,
           completed: set.completed,
           skipped: set.skipped,
         }))
         .sort((a, b) => a.date.localeCompare(b.date));
-      csv = toCsv(rows, ["date", "session", "exercise", "setNumber", "weightKg", "reps", "rpe", "completed", "skipped"]);
+      csv = toCsv(rows, ["date", "session", "exercise", "setNumber", "weightKg", "reps", "durationSec", "distanceKm", "rpe", "completed", "skipped"]);
       break;
     }
     default: {

@@ -141,10 +141,10 @@ export default function HomePage() {
           <Plus className="size-5" />
           Makanan
         </button>
-        {/* A real <input> under the tap so iOS opens the camera directly. */}
-        <label className="flex flex-col items-center gap-1.5 rounded-2xl border border-white/[0.06] bg-ink-850 py-3 text-xs font-semibold text-ink-100 active:scale-95">
+        {/* A real <input> under the tap so iOS opens the camera directly, then the AI sheet. */}
+        <label className="flex flex-col items-center gap-1.5 rounded-2xl border border-lime-400/35 bg-lime-400/10 py-3 text-xs font-semibold text-lime-300 active:scale-95">
           <Camera className="size-5" />
-          Foto
+          Foto AI
           <input
             type="file"
             accept="image/*"
@@ -152,6 +152,7 @@ export default function HomePage() {
             hidden
             onChange={(e) => {
               const file = e.target.files?.[0];
+              e.target.value = "";
               if (file) navigate("/food/new", { state: { file } });
             }}
           />

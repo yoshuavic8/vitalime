@@ -52,8 +52,24 @@ export type FoodEntry = {
   verification: Verification;
   notes?: string;
   templateId?: string;
+  /** Components when the entry was built from the food database; totals above stay authoritative. */
+  items?: FoodItemLine[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type FoodItemLine = {
+  name: string;
+  grams: number;
+  /** e.g. "2 × 1 centong" — how the user picked the amount. */
+  serving?: string;
+  caloriesKcal: number;
+  proteinG: number;
+  carbsG: number;
+  fatG: number;
+  source: "local_db" | "open_food_facts" | "ai_estimate";
+  /** Local food id or barcode. */
+  refId?: string;
 };
 
 export type FoodPhoto = {
@@ -182,9 +198,16 @@ export type Equipment =
   | "machine"
   | "cable"
   | "resistance_band"
-  | "kettlebell";
+  | "kettlebell"
+  | "cardio_machine";
+export const EQUIPMENT: Equipment[] = ["bodyweight", "dumbbell", "barbell", "machine", "cable", "resistance_band", "kettlebell", "cardio_machine"];
+/** What a typical home setup has; used as the default for the "Rumah" location. */
+export const HOME_EQUIPMENT: Equipment[] = ["bodyweight", "dumbbell", "resistance_band", "kettlebell"];
 
-export type MovementPattern = "push" | "pull" | "squat" | "hinge" | "lunge" | "carry" | "core";
+export type MovementPattern = "push" | "pull" | "squat" | "hinge" | "lunge" | "carry" | "core" | "plyometric" | "cardio" | "mobility";
+
+/** reps: kg × reps. time: seconds held (targets are seconds). cardio: minutes + distance (targets are minutes). */
+export type ExerciseMetric = "reps" | "time" | "cardio";
 
 export type Exercise = {
   id: string;
@@ -193,14 +216,18 @@ export type Exercise = {
   secondaryMuscles: string[];
   equipment: Equipment;
   pattern: MovementPattern;
+  metric?: ExerciseMetric;
+  level?: "beginner" | "intermediate" | "advanced";
   instructions: string;
+  /** Short coaching cues shown under the animation. */
+  cues?: string[];
   alternatives: string[];
   needsCaution?: boolean;
   isCustom: boolean;
   createdAt: string;
 };
 
-export type Split = "full_body" | "upper_lower" | "push_pull_legs" | "custom";
+export type Split = "full_body" | "upper_lower" | "push_pull_legs" | "body_part" | "circuit" | "custom";
 
 export type TrainingProgram = {
   id: string;
@@ -267,6 +294,9 @@ export type WorkoutSet = {
   targetRepMax?: number;
   reps?: number;
   weightKg?: number;
+  /** time metric: seconds held; cardio metric: total seconds. */
+  durationSec?: number;
+  distanceKm?: number;
   rpe?: number;
   restSeconds?: number;
   completed: boolean;
@@ -286,9 +316,19 @@ export type AiAnalysis = {
   createdAt: string;
 };
 
+export type AiFoodComponent = {
+  name: string;
+  estimated_portion?: string;
+  grams?: number;
+  calories_kcal?: number;
+  protein_g?: number;
+  carbs_g?: number;
+  fat_g?: number;
+};
+
 export type AiFoodResult = {
   food_name: string;
-  components?: { name: string; estimated_portion?: string }[];
+  components?: AiFoodComponent[];
   portion_assumption?: string;
   calories_kcal: number;
   calories_range?: [number, number];

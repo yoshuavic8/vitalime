@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ClipboardPaste, Copy, Share2, ShieldCheck } from "lucide-react";
-import { Badge, Button, Card, Field, Notice, Sheet, TextArea, TextInput, useToast } from "./ui";
+import { ClipboardPaste, Copy, Share2, ShieldCheck, Sparkles } from "lucide-react";
+import { Badge, BlobImage, Button, Card, Field, Notice, Sheet, TextArea, TextInput, useToast } from "./ui";
 import { buildFoodPrompt, parseAiFoodResult } from "../lib/aiHandoff";
 import { saveAiAnalysis } from "../db/repo/ai";
 import { getSetting, setSetting, SETTING_KEYS } from "../db/repo/settings";
 import type { AiFoodResult, MealType } from "../db/types";
 import { fmtInt } from "../lib/format";
+import { isIos } from "../lib/storage";
 
 export function AiHandoffSheet({
   open,
@@ -26,11 +27,12 @@ export function AiHandoffSheet({
 }) {
   const toast = useToast();
   const [consent, setConsent] = useState<boolean>();
-  const [model, setModel] = useState("Grok (manual)");
+  const [model, setModel] = useState("Grok / Cursor (manual)");
   const [raw, setRaw] = useState("");
   const [parsed, setParsed] = useState<AiFoodResult>();
   const [error, setError] = useState<string>();
   const prompt = buildFoodPrompt({ mealType, description, portionHint });
+  const ios = isIos();
 
   useEffect(() => {
     if (!open) return;
@@ -90,30 +92,42 @@ export function AiHandoffSheet({
     setParsed(undefined);
   };
 
-  if (consent === false) {
+  if (consent !== true) {
     return (
-      <Sheet open={open} onClose={onClose} title="Analisis AI">
-        <div className="space-y-3 text-sm leading-relaxed text-ink-300">
-          <div className="grid size-12 place-items-center rounded-2xl bg-lime-400/15 text-lime-400">
-            <ShieldCheck className="size-6" />
-          </div>
-          <p>
-            Vitalime <b className="text-ink-100">tidak mengirim apa pun ke AI secara otomatis</b>. Kamu sendiri yang membagikan foto dan
-            prompt ke aplikasi AI (mis. Grok) lewat menu Share, lalu menempelkan jawabannya kembali.
-          </p>
-          <p>Hasil AI selalu disimpan sebagai <b className="text-ink-100">draft</b> dan baru final setelah kamu konfirmasi.</p>
-          <p>Foto yang kamu bagikan akan diproses oleh penyedia AI tersebut sesuai kebijakan privasinya.</p>
-        </div>
-        <Button
-          block
-          className="mt-5"
-          onClick={async () => {
-            await setSetting(SETTING_KEYS.aiConsent, true);
-            setConsent(true);
-          }}
-        >
-          Saya paham, lanjutkan
-        </Button>
+      <Sheet open={open} onClose={onClose} title="Analisis foto makanan">
+        {consent == null ? (
+          <p className="text-sm text-ink-400">Memuat…</p>
+        ) : (
+          <>
+            <div className="space-y-3 text-sm leading-relaxed text-ink-300">
+              <div className="grid size-12 place-items-center rounded-2xl bg-lime-400/15 text-lime-400">
+                <ShieldCheck className="size-6" />
+              </div>
+              <p>
+                Vitalime <b className="text-ink-100">tidak mengirim foto ke AI secara otomatis</b>. Langganan Cursor tidak
+                memberi API ke aplikasi di iPhone — kamu sendiri yang membagikan foto + prompt.
+              </p>
+              <p>
+                Di iPhone: Share ke <b className="text-ink-100">Grok</b> (model yang sama). Di komputer: tempel prompt di
+                chat Cursor dan lampirkan foto.
+              </p>
+              <p>
+                Hasil selalu disimpan sebagai <b className="text-ink-100">draft</b> sampai kamu periksa dan konfirmasi.
+                Foto yang dibagikan diproses oleh penyedia AI sesuai kebijakan privasinya.
+              </p>
+            </div>
+            <Button
+              block
+              className="mt-5"
+              onClick={async () => {
+                await setSetting(SETTING_KEYS.aiConsent, true);
+                setConsent(true);
+              }}
+            >
+              Saya paham, lanjutkan
+            </Button>
+          </>
+        )}
       </Sheet>
     );
   }
@@ -122,7 +136,7 @@ export function AiHandoffSheet({
     <Sheet
       open={open}
       onClose={onClose}
-      title="Analisis AI (manual)"
+      title="Hitung kalori dari foto"
       footer={
         <Button block disabled={!parsed} onClick={apply}>
           Gunakan sebagai draft
@@ -130,8 +144,18 @@ export function AiHandoffSheet({
       }
     >
       <div className="space-y-4">
-        <Step n={1} title="Bagikan ke aplikasi AI">
-          {!photo && <Notice tone="warn">Belum ada foto. Kamu tetap bisa mengirim deskripsi saja, tapi estimasi akan kurang akurat.</Notice>}
+        {photo ? (
+          <BlobImage blob={photo} alt="Foto makanan" className="h-40 w-full rounded-3xl object-cover" />
+        ) : (
+          <Notice tone="warn">Belum ada foto. Estimasi dari deskripsi saja akan kurang akurat — ambil foto piring dulu.</Notice>
+        )}
+
+        <Step n={1} title={ios ? "Bagikan ke Grok" : "Kirim ke Cursor atau Grok"}>
+          <p className="text-sm text-ink-400">
+            {ios
+              ? "Pilih Grok di Share Sheet (bukan Safari). Prompt ikut terkirim bersama foto."
+              : "Tempel prompt di chat Cursor, lampirkan foto, lalu salin JSON yang dikembalikan."}
+          </p>
           <div className="mt-2 flex gap-2">
             <Button className="flex-1" icon={<Share2 className="size-4" />} onClick={share}>
               {photo ? "Share foto + prompt" : "Share prompt"}
@@ -153,7 +177,7 @@ export function AiHandoffSheet({
           </details>
         </Step>
 
-        <Step n={2} title="Tempel jawaban AI">
+        <Step n={2} title="Tempel jawaban JSON">
           <TextArea
             rows={5}
             placeholder='{"food_name": "...", "calories_kcal": ...}'
@@ -177,6 +201,7 @@ export function AiHandoffSheet({
         {parsed && (
           <Card className="border-lime-400/25">
             <div className="flex items-center gap-2">
+              <Sparkles className="size-4 text-lime-400" />
               <span className="font-semibold">{parsed.food_name}</span>
               {parsed.confidence && <Badge tone={parsed.confidence === "high" ? "lime" : "warn"}>{parsed.confidence}</Badge>}
             </div>
@@ -191,7 +216,27 @@ export function AiHandoffSheet({
             <div className="mt-1 text-sm text-ink-300">
               P {fmtInt(parsed.protein_g)} g · K {fmtInt(parsed.carbs_g)} g · L {fmtInt(parsed.fat_g)} g
             </div>
+            {!!parsed.components?.length && (
+              <ul className="mt-3 space-y-1 text-sm text-ink-300">
+                {parsed.components.map((c) => (
+                  <li key={c.name} className="flex gap-2">
+                    <span className="min-w-0 flex-1 truncate">
+                      {c.name}
+                      {c.estimated_portion && <span className="text-ink-500"> · {c.estimated_portion}</span>}
+                    </span>
+                    {c.calories_kcal != null && <span className="tabular-nums text-ink-400">{fmtInt(c.calories_kcal)}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
             {parsed.portion_assumption && <p className="mt-2 text-xs text-ink-400">Asumsi: {parsed.portion_assumption}</p>}
+            {!!parsed.clarifying_questions?.length && (
+              <ul className="mt-2 list-disc pl-5 text-sm text-amber-200/90">
+                {parsed.clarifying_questions.map((q) => (
+                  <li key={q}>{q}</li>
+                ))}
+              </ul>
+            )}
           </Card>
         )}
       </div>

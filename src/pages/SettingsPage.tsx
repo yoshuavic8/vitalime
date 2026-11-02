@@ -4,6 +4,7 @@ import { Download, HardDrive, Lock, ShieldCheck, Trash2, Upload } from "lucide-r
 import {
   Button,
   Card,
+  Chip,
   Field,
   NumberInput,
   Notice,
@@ -18,9 +19,22 @@ import {
   useToast,
 } from "../components/ui";
 import { useLiveQuery } from "../hooks";
-import { DEFAULT_GOAL, getGoalFor, getProfile, getSetting, saveGoal, saveProfile, setSetting, SETTING_KEYS } from "../db/repo/settings";
+import {
+  DEFAULT_GOAL,
+  getGoalFor,
+  getProfile,
+  getSetting,
+  getTrainingSetup,
+  saveGoal,
+  saveProfile,
+  saveTrainingSetup,
+  setSetting,
+  SETTING_KEYS,
+  type TrainingPlace,
+} from "../db/repo/settings";
 import { photoStorageStats, purgeOriginalPhotosOlderThan } from "../db/repo/food";
-import type { Goal, Sex, TargetMode } from "../db/types";
+import { EQUIPMENT, HOME_EQUIPMENT, type Equipment, type Goal, type Sex, type TargetMode } from "../db/types";
+import { EQUIPMENT_LABEL } from "../lib/labels";
 import { SCHEMA_VERSION, type TableName } from "../db/db";
 import { exportBackupFile, isEncryptedBackup, readBackup, restoreBackup, shareOrDownload, type BackupPreview } from "../lib/backup";
 import { buildCsv, type CsvKind } from "../lib/exportCsv";
@@ -52,6 +66,7 @@ export default function SettingsPage() {
       <PageHeader back title="Pengaturan" />
       <ProfileSection />
       <GoalSection />
+      <EquipmentSection />
       <BackupSection />
       <CsvSection />
       <StorageSection />
@@ -208,6 +223,38 @@ function GoalSection() {
           </Button>
         )}
         <p className="px-1 text-xs text-ink-500">Target berlaku mulai hari ini; hari sebelumnya tetap memakai target lama.</p>
+      </Card>
+    </>
+  );
+}
+
+function EquipmentSection() {
+  const setup = useLiveQuery(getTrainingSetup);
+  if (!setup) return null;
+  const choosePlace = (place: TrainingPlace) => saveTrainingSetup(place, place === "home" ? HOME_EQUIPMENT : EQUIPMENT);
+  const toggle = (e: Equipment) =>
+    saveTrainingSetup(setup.place, setup.equipment.includes(e) ? setup.equipment.filter((x) => x !== e) : [...setup.equipment, e]);
+  return (
+    <>
+      <SectionTitle>Alat latihan</SectionTitle>
+      <Card className="space-y-3">
+        <Segmented<TrainingPlace>
+          value={setup.place}
+          onChange={choosePlace}
+          options={[
+            { value: "gym", label: "Gym" },
+            { value: "home", label: "Rumah" },
+            { value: "both", label: "Keduanya" },
+          ]}
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {EQUIPMENT.map((e) => (
+            <Chip key={e} active={setup.equipment.includes(e)} onClick={() => toggle(e)}>
+              {EQUIPMENT_LABEL[e]}
+            </Chip>
+          ))}
+        </div>
+        <p className="text-xs text-ink-400">Dipakai untuk filter library, saran ganti latihan, dan menandai template yang butuh alat lain.</p>
       </Card>
     </>
   );

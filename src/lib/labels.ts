@@ -1,4 +1,4 @@
-import type { DataSource, Equipment, MealType, MovementPattern, Verification } from "../db/types";
+import type { DataSource, Equipment, ExerciseMetric, MealType, MovementPattern, Split, Verification } from "../db/types";
 
 export const MEAL_LABEL: Record<MealType, string> = {
   breakfast: "Sarapan",
@@ -29,6 +29,7 @@ export const EQUIPMENT_LABEL: Record<Equipment, string> = {
   cable: "Cable",
   resistance_band: "Band",
   kettlebell: "Kettlebell",
+  cardio_machine: "Mesin kardio",
 };
 
 export const PATTERN_LABEL: Record<MovementPattern, string> = {
@@ -39,6 +40,24 @@ export const PATTERN_LABEL: Record<MovementPattern, string> = {
   lunge: "Lunge",
   carry: "Carry",
   core: "Core",
+  plyometric: "Pliometrik",
+  cardio: "Kardio",
+  mobility: "Mobilitas",
+};
+
+export const METRIC_LABEL: Record<ExerciseMetric, string> = {
+  reps: "Beban × repetisi",
+  time: "Durasi (detik)",
+  cardio: "Durasi & jarak",
+};
+
+export const SPLIT_LABEL: Record<Split, string> = {
+  full_body: "Full body",
+  upper_lower: "Upper/Lower",
+  push_pull_legs: "Push/Pull/Legs",
+  body_part: "Split per otot",
+  circuit: "Circuit",
+  custom: "Kustom",
 };
 
 export function defaultMealForNow(): MealType {

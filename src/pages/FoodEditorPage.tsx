@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Camera, Copy, ImagePlus, Sparkles, Star, Trash2, X } from "lucide-react";
+import { Camera, Copy, ImagePlus, Search, Sparkles, Star, Trash2, X } from "lucide-react";
 import {
   Badge,
   BlobImage,
@@ -19,6 +19,8 @@ import {
   useToast,
 } from "../components/ui";
 import { AiHandoffSheet } from "../components/AiHandoffSheet";
+import { FoodLookupSheet } from "../components/FoodLookupSheet";
+import { linesFromAiComponents, sumLines } from "../lib/foodCalc";
 import {
   deleteFoodEntry,
   duplicateFoodEntry,
@@ -32,7 +34,7 @@ import {
   type NewPhoto,
 } from "../db/repo/food";
 import { attachAnalyses } from "../db/repo/ai";
-import { MEAL_TYPES, PORTION_UNITS, type AiFoodResult, type FoodPhoto, type MealType, type PortionUnit } from "../db/types";
+import { MEAL_TYPES, PORTION_UNITS, type AiFoodResult, type FoodItemLine, type FoodPhoto, type MealType, type PortionUnit } from "../db/types";
 import { fromDateTimeInput, isoForLocalDate, toDateTimeInput, todayLocal } from "../lib/date";
 import { processPhoto } from "../lib/image";
 import { defaultMealForNow, MEAL_LABEL } from "../lib/labels";
@@ -87,20 +89,24 @@ export default function FoodEditorPage() {
   const [aiResult, setAiResult] = useState<AiFoodResult>();
   const [analysisIds, setAnalysisIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [items, setItems] = useState<FoodItemLine[]>([]);
+  const [lookupOpen, setLookupOpen] = useState(false);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
   const templates = useLiveQuery(listTemplates);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setForm((f) => ({ ...f, [k]: v }));
 
-  const addFiles = async (files: FileList | File[] | null) => {
+  const addFiles = async (files: FileList | File[] | null, opts: { analyze?: boolean } = {}) => {
     if (!files?.length) return;
+    const firstShot = newPhotos.length + existingPhotos.filter((p) => !removedPhotoIds.includes(p.id)).length === 0;
     setBusy(true);
     try {
       for (const file of Array.from(files)) {
         const p = await processPhoto(file);
         setNewPhotos((cur) => [...cur, { ...p, sizeBytes: p.blob.size + p.thumb.size, key: crypto.randomUUID() }]);
       }
+      if (opts.analyze ?? firstShot) setAiOpen(true);
     } catch {
       toast("Foto tidak bisa diproses");
     } finally {
@@ -129,6 +135,7 @@ export default function FoodEditorPage() {
           source: e.source,
           verification: e.verification,
         });
+        setItems(e.items ?? []);
         setExistingPhotos(await listPhotosFor(id));
         setLoaded(true);
         return;
@@ -137,7 +144,10 @@ export default function FoodEditorPage() {
       const template = params.get("template");
       if (from) {
         const e = await getFoodEntry(from);
-        if (e) applyValues(e);
+        if (e) {
+          applyValues(e);
+          setItems(e.items ?? []);
+        }
       } else if (template) {
         const t = (await listTemplates()).find((x) => x.id === template);
         if (t) {
@@ -146,7 +156,10 @@ export default function FoodEditorPage() {
         }
       }
       const passed = (location.state as { file?: File } | null)?.file;
-      if (passed) addFiles([passed]);
+      if (passed) {
+        await addFiles([passed], { analyze: true });
+        navigate(location.pathname + location.search, { replace: true, state: {} });
+      }
     })();
   }, [id]);
 
@@ -187,10 +200,15 @@ export default function FoodEditorPage() {
 
   const applyAi = (r: AiFoodResult, analysisId: string) => {
     setAiResult(r);
+    const lines = r.components?.length ? linesFromAiComponents(r.components) : [];
+    setItems(lines);
     setAnalysisIds((ids) => [...ids, analysisId]);
     setForm((f) => ({
       ...f,
       name: f.name || r.food_name,
+      description: lines.length
+        ? lines.map((l) => `${l.name} (${l.serving ?? `${l.grams} g`})`).join(", ")
+        : f.description,
       caloriesKcal: Math.round(r.calories_kcal),
       proteinG: Math.round(r.protein_g),
       carbsG: Math.round(r.carbs_g),
@@ -200,6 +218,27 @@ export default function FoodEditorPage() {
       verification: "draft",
     }));
     setAiOpen(false);
+  };
+
+  const applyPlate = (lines: FoodItemLine[]) => {
+    const t = sumLines(lines);
+    const single = lines.length === 1 ? lines[0] : undefined;
+    setItems(lines);
+    setAiResult(undefined);
+    setForm((f) => ({
+      ...f,
+      name: f.name.trim() && items.length === 0 ? f.name : plateName(lines),
+      description: lines.map((l) => `${l.name} (${l.serving ?? `${l.grams} g`})`).join(", "),
+      portionValue: single ? single.grams : 1,
+      portionUnit: single ? "g" : "porsi",
+      caloriesKcal: t.caloriesKcal,
+      proteinG: Math.round(t.proteinG),
+      carbsG: Math.round(t.carbsG),
+      fatG: Math.round(t.fatG),
+      source: "manual",
+      verification: "confirmed",
+    }));
+    setLookupOpen(false);
   };
 
   const save = async (verificationOverride?: FormState["verification"]) => {
@@ -232,6 +271,7 @@ export default function FoodEditorPage() {
       verification,
       notes: form.notes.trim() || undefined,
       templateId,
+      items: items.length ? items : undefined,
     };
     try {
       const entryId = await saveFoodEntry(input, { id, newPhotos, removedPhotoIds });
@@ -309,19 +349,65 @@ export default function FoodEditorPage() {
           <ImagePlus className="size-6" />
           Galeri
         </button>
-        <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-        <input ref={galleryRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+        <input
+          ref={cameraRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          hidden
+          onChange={(e) => {
+            void addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <input
+          ref={galleryRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            void addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
       </div>
 
-      <Button
-        variant="secondary"
-        block
-        className="mt-3 border-lime-400/25"
-        icon={<Sparkles className="size-5 text-lime-400" />}
-        onClick={() => setAiOpen(true)}
-      >
-        Analisis dengan AI
-      </Button>
+      <div className="mt-3 grid grid-cols-[1.4fr_1fr] gap-2">
+        <Button icon={<Search className="size-5" />} onClick={() => setLookupOpen(true)}>
+          {items.length ? "Ubah piring" : "Cari kalori"}
+        </Button>
+        <Button
+          variant={firstPhoto && form.caloriesKcal == null ? "primary" : "secondary"}
+          className="border-lime-400/25"
+          icon={<Sparkles className="size-5" />}
+          onClick={() => setAiOpen(true)}
+        >
+          {firstPhoto ? "Hitung foto" : "AI"}
+        </Button>
+      </div>
+
+      {items.length > 0 && (
+        <Card className="mt-3 border-lime-400/20" onClick={() => setLookupOpen(true)}>
+          <div className="flex items-center gap-2">
+            <Badge tone="lime">{items.every((l) => l.source === "local_db") ? "Dari database" : "Komponen piring"}</Badge>
+            <span className="ml-auto text-sm font-semibold tabular-nums">
+              {form.source === "ai_estimate" ? `≈ ${fmtInt(sumLines(items).caloriesKcal)}` : fmtInt(sumLines(items).caloriesKcal)} kkal
+            </span>
+          </div>
+          <ul className="mt-2 space-y-0.5 text-sm text-ink-300">
+            {items.map((l, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="min-w-0 flex-1 truncate">
+                  {l.name} <span className="text-ink-500">· {l.serving ?? `${l.grams} g`}</span>
+                </span>
+                <span className="tabular-nums">{fmtInt(l.caloriesKcal)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-xs text-ink-500">Angka di bawah boleh dikoreksi bila porsi/cara masak berbeda.</p>
+        </Card>
+      )}
 
       {form.source === "ai_estimate" && (
         <Card className="mt-3 border-sky-400/20">
@@ -456,8 +542,15 @@ export default function FoodEditorPage() {
         portionHint={form.portionValue != null ? `${form.portionValue} ${form.portionUnit}` : undefined}
         onApply={applyAi}
       />
+
+      <FoodLookupSheet open={lookupOpen} onClose={() => setLookupOpen(false)} initialItems={items} onApply={applyPlate} />
     </Page>
   );
+}
+
+function plateName(lines: FoodItemLine[]) {
+  const names = lines.map((l) => l.name.replace(/\s*\(.*\)$/, ""));
+  return names.length <= 3 ? names.join(" + ") : `${names.slice(0, 2).join(" + ")} + ${names.length - 2} lainnya`;
 }
 
 function PhotoTile({ blob, onRemove }: { blob: Blob; onRemove: () => void }) {

@@ -1,5 +1,5 @@
 import { db } from "../db";
-import type { Goal, Profile } from "../types";
+import { EQUIPMENT, type Equipment, type Goal, type Profile } from "../types";
 import { newId } from "../../lib/id";
 import { nowIso, todayLocal } from "../../lib/date";
 
@@ -77,4 +77,20 @@ export const SETTING_KEYS = {
   aiConsent: "aiConsent",
   aiModelLabel: "aiModelLabel",
   persistGranted: "persistGranted",
+  trainingPlace: "trainingPlace",
+  myEquipment: "myEquipment",
 } as const;
+
+export type TrainingPlace = "gym" | "home" | "both";
+
+export async function getTrainingSetup(): Promise<{ place: TrainingPlace; equipment: Equipment[] }> {
+  const [place, equipment] = await Promise.all([
+    getSetting<TrainingPlace>(SETTING_KEYS.trainingPlace),
+    getSetting<Equipment[]>(SETTING_KEYS.myEquipment),
+  ]);
+  return { place: place ?? "both", equipment: equipment ?? EQUIPMENT };
+}
+
+export async function saveTrainingSetup(place: TrainingPlace, equipment: Equipment[]) {
+  await Promise.all([setSetting(SETTING_KEYS.trainingPlace, place), setSetting(SETTING_KEYS.myEquipment, equipment)]);
+}

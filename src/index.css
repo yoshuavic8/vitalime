@@ -113,3 +113,23 @@ input[type="number"]::-webkit-outer-spin-button {
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
 }
+
+/* Sprite atlas rows are exercises, columns are frames; inline styles set --s (cell px) and the row. */
+@keyframes sprite-frames {
+  from {
+    background-position-x: 0;
+  }
+  to {
+    background-position-x: calc(var(--s) * var(--frames) * -1);
+  }
+}
+.sprite-thumb {
+  background-repeat: no-repeat;
+  animation: sprite-frames 2.4s steps(8) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .sprite-thumb {
+    animation: none;
+    background-position-x: calc(var(--s) * -4);
+  }
+}

@@ -62,8 +62,9 @@ selalu ditampilkan terpisah dan tidak pernah dijumlahkan ke target.
 
 ## Phase 5 — Weight Training
 
-- ✅ Library ±34 latihan (instruksi Bahasa Indonesia, penanda hati-hati), latihan kustom.
-- ✅ Template program (Full Body 2×/3×, Upper/Lower 4×), program builder, jadwal per hari dalam minggu.
+- ✅ Library ~90 latihan (gym mesin, barbell, dumbbell, bodyweight, kardio, mobilitas) dengan instruksi & cue Bahasa Indonesia.
+- ✅ Sprite atlas 8 frame + animasi vektor di library, sesi, dan halaman detail.
+- ✅ Template program gym/rumah: pemula mesin, hipertrofi (FB/UL/PPL/bro split), kekuatan 5×5, glutes, calisthenics, HIIT, kardio zona 2, mobilitas.
 - ✅ Sesi: set/reps/kg/RPE tersimpan per ketikan, beban otomatis diteruskan ke set berikutnya, rest timer + bunyi, tambah/kurangi set, latihan tambahan.
 - ✅ Riwayat per latihan, PB berat, estimasi 1RM, volume.
 - ✅ Saran progresi (🧪) — hanya saran, tidak pernah diterapkan otomatis; tertahan bila ada nyeri.
@@ -72,10 +73,12 @@ selalu ditampilkan terpisah dan tidak pernah dijumlahkan ke target.
 
 ## Phase 6 — AI Food Analysis (Jalur A)
 
-- ✅ Persetujuan eksplisit sebelum pertama kali, prompt JSON terstruktur.
-- ✅ Bagikan foto + prompt lewat share sheet (atau salin prompt), tempel jawaban, validasi (🧪).
+- ✅ Foto dari Home ("Foto AI") langsung membuka sheet analisis setelah kamera.
+- ✅ Persetujuan eksplisit; prompt JSON untuk makanan Indonesia (komponen + gram + minyak).
+- ✅ iPhone: Share foto+prompt ke Grok. Desktop: salin prompt ke chat Cursor. Bukan API Cursor (langganan ≠ endpoint).
+- ✅ Tempel JSON, validasi (🧪), komponen dimatch ke database makanan lokal bila namanya dikenal.
 - ✅ Hasil selalu **draft** → konfirmasi / koreksi; label model disimpan.
-- ⏳ Jalur B (API resmi) — sengaja tidak dibuat.
+- ⏳ Jalur B (API resmi) — sengaja tidak dibuat; butuh backend + kunci API.
 
 ## Phase 7 — Weekly Insight & Reports
 

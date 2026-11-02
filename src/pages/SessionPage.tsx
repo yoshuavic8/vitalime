@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Check, ChevronRight, Info, Minus, Plus, SkipForward, Timer, Trash2, TriangleAlert, TrendingUp } from "lucide-react";
+import { Check, ChevronRight, Info, Minus, Play, Plus, Repeat, SkipForward, Square, Timer, Trash2, TriangleAlert, TrendingUp } from "lucide-react";
 import { Badge, Button, Card, Field, Notice, Page, PageHeader, Sheet, TextArea, Toggle, cx, useToast } from "../components/ui";
 import { ExercisePicker } from "../components/ExercisePicker";
+import { ExerciseAnimation, ExerciseThumb } from "../components/ExerciseAnimation";
 import { useLiveQuery, useNow } from "../hooks";
 import {
   addExerciseToSession,
@@ -16,12 +17,17 @@ import {
   programTargetsFor,
   progressionHint,
   setVolume,
+  swapCandidates,
+  swapSessionExercise,
   updateSession,
   updateSet,
 } from "../db/repo/training";
-import type { WorkoutSet } from "../db/types";
+import { getTrainingSetup } from "../db/repo/settings";
+import type { Exercise, ExerciseMetric, WorkoutSet } from "../db/types";
 import { formatDayLong } from "../lib/date";
-import { fmt1, fmtInt } from "../lib/format";
+import { fmtInt } from "../lib/format";
+import { EQUIPMENT_LABEL } from "../lib/labels";
+import { clock, formatSet, metricOf, targetLabel } from "../lib/sets";
 
 function beep() {
   try {
@@ -40,28 +46,34 @@ function beep() {
   }
 }
 
+type Hold = { setId: string; startedAt: number; total: number; restSeconds?: number };
+
 export default function SessionPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [finishOpen, setFinishOpen] = useState(false);
+  const [techniqueFor, setTechniqueFor] = useState<string>();
+  const [swapFor, setSwapFor] = useState<string>();
   const [restEndsAt, setRestEndsAt] = useState<number>();
+  const [hold, setHold] = useState<Hold>();
   const beeped = useRef(false);
 
   const data = useLiveQuery(async () => {
     const detail = await getSessionDetail(id!);
     if (!detail) return { detail };
-    const [exercises, targets] = await Promise.all([exerciseMap(), programTargetsFor(detail.session.programDayId)]);
+    const [exercises, targets, setup] = await Promise.all([exerciseMap(), programTargetsFor(detail.session.programDayId), getTrainingSetup()]);
     const lasts = Object.fromEntries(
       await Promise.all(detail.groups.map(async (g) => [g.exerciseId, await lastPerformance(g.exerciseId, detail.session.id)] as const)),
     );
-    return { detail, exercises, targets, lasts };
+    return { detail, exercises, targets, lasts, setup };
   }, [id]);
 
   const live = data?.detail?.session.status === "in_progress";
-  const now = useNow(1000, live);
+  const now = useNow(hold ? 250 : 1000, live);
   const restLeft = restEndsAt ? Math.max(0, Math.ceil((restEndsAt - now) / 1000)) : 0;
+  const holdElapsed = hold ? Math.min(hold.total, Math.floor((now - hold.startedAt) / 1000)) : 0;
 
   useEffect(() => {
     if (restEndsAt && restLeft === 0 && !beeped.current) {
@@ -72,25 +84,48 @@ export default function SessionPage() {
     }
   }, [restLeft, restEndsAt, toast]);
 
+  const finishHold = async (h: Hold, seconds: number) => {
+    setHold(undefined);
+    if (seconds <= 0) return;
+    await updateSet(h.setId, { durationSec: seconds, completed: true, skipped: false });
+    if (h.restSeconds) {
+      beeped.current = false;
+      setRestEndsAt(Date.now() + h.restSeconds * 1000);
+    }
+  };
+
+  useEffect(() => {
+    if (hold && holdElapsed >= hold.total) {
+      beep();
+      toast("Waktu tercapai");
+      void finishHold(hold, hold.total);
+    }
+    // finishHold only closes over stable setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hold, holdElapsed, toast]);
+
   if (!data) return null;
   if (!data.detail) return <Page><PageHeader back title="Sesi tidak ditemukan" /></Page>;
   const { session, groups } = data.detail;
-  const { exercises, targets, lasts } = data;
+  const { exercises, targets, lasts, setup } = data;
 
   const elapsed = Math.floor(((session.endedAt ? new Date(session.endedAt).getTime() : now) - new Date(session.startedAt).getTime()) / 1000);
   const allSets = groups.flatMap((g) => g.sets);
   const volume = allSets.reduce((v, s) => v + setVolume(s), 0);
   const doneCount = allSets.filter((s) => s.completed).length;
 
+  const startRest = (s: WorkoutSet) => {
+    if (!s.restSeconds || !live) return;
+    beeped.current = false;
+    setRestEndsAt(Date.now() + s.restSeconds * 1000);
+  };
+
   const completeSet = async (s: WorkoutSet) => {
     const completed = !s.completed;
     await updateSet(s.id, { completed, skipped: false });
     const next = groups.find((g) => g.exerciseId === s.exerciseId)?.sets.find((x) => x.setNumber > s.setNumber && !x.completed);
     if (completed && next && next.weightKg == null && s.weightKg != null) await updateSet(next.id, { weightKg: s.weightKg });
-    if (completed && s.restSeconds && live) {
-      beeped.current = false;
-      setRestEndsAt(Date.now() + s.restSeconds * 1000);
-    }
+    if (completed) startRest(s);
   };
 
   return (
@@ -128,25 +163,37 @@ export default function SessionPage() {
 
       {groups.map((g) => {
         const ex = exercises[g.exerciseId];
+        const metric = metricOf(ex);
         const last = lasts[g.exerciseId];
+        const lastDone = last?.sets.filter((s) => s.completed) ?? [];
         const target = targets[g.exerciseId];
-        const hint = progressionHint(last, { repMax: target?.repMax ?? g.sets[0]?.targetRepMax, targetSets: target?.targetSets });
+        const hint = progressionHint(last, { repMax: target?.repMax ?? g.sets[0]?.targetRepMax, targetSets: target?.targetSets }, metric);
+        const tLabel = targetLabel(g.sets[0]?.targetRepMin, g.sets[0]?.targetRepMax, metric);
+        const canSwap = live && g.sets.some((s) => !s.completed);
         return (
           <section key={g.exerciseId} className="mt-5">
             <Card className="p-0">
-              <button className="flex w-full items-center gap-2 px-4 pb-2 pt-4 text-left" onClick={() => navigate(`/training/exercise/${g.exerciseId}`)}>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 font-display text-lg font-bold">
-                    {ex?.name ?? "Latihan"}
-                    {ex?.needsCaution && <TriangleAlert className="size-4 text-amber-400" />}
+              <div className="flex items-center gap-3 px-4 pb-2 pt-4">
+                <button aria-label="Lihat teknik" onClick={() => setTechniqueFor(g.exerciseId)}>
+                  <ExerciseThumb exerciseId={g.exerciseId} size={56} />
+                </button>
+                <button className="min-w-0 flex-1 text-left" onClick={() => navigate(`/training/exercise/${g.exerciseId}`)}>
+                  <div className="flex items-center gap-1.5 font-display text-lg font-bold leading-tight">
+                    <span className="truncate">{ex?.name ?? "Latihan"}</span>
+                    {ex?.needsCaution && <TriangleAlert className="size-4 shrink-0 text-amber-400" />}
+                    <ChevronRight className="size-4 shrink-0 text-ink-500" />
                   </div>
                   <div className="text-xs text-ink-400">
-                    {g.sets[0]?.targetRepMin != null ? `Target ${g.sets[0].targetRepMin}–${g.sets[0].targetRepMax} rep` : ex?.primaryMuscle}
-                    {last && ` · terakhir: ${last.sets.filter((s) => s.completed).map((s) => `${fmt1(s.weightKg)}×${s.reps ?? "—"}`).join(", ")}`}
+                    {tLabel ? `Target ${tLabel}` : ex?.primaryMuscle}
+                    {lastDone.length > 0 && ` · terakhir: ${lastDone.map((s) => formatSet(s, metric)).join(", ")}`}
                   </div>
-                </div>
-                <ChevronRight className="size-4 text-ink-500" />
-              </button>
+                </button>
+                {canSwap && (
+                  <button aria-label="Ganti latihan" className="grid size-9 shrink-0 place-items-center rounded-full bg-white/[0.05] text-ink-300" onClick={() => setSwapFor(g.exerciseId)}>
+                    <Repeat className="size-4" />
+                  </button>
+                )}
+              </div>
 
               {hint && live && (
                 <div
@@ -162,16 +209,21 @@ export default function SessionPage() {
                 </div>
               )}
 
-              <div className="grid grid-cols-[28px_1fr_1fr_56px_44px] items-center gap-1.5 px-3 pb-1 text-[10px] uppercase tracking-wide text-ink-500">
-                <span className="text-center">Set</span>
-                <span className="text-center">kg</span>
-                <span className="text-center">Rep</span>
-                <span className="text-center">RPE</span>
-                <span />
-              </div>
+              <SetHeader metric={metric} />
               <div className="space-y-1.5 px-3 pb-3">
                 {g.sets.map((s) => (
-                  <SetRow key={s.id} set={s} onToggle={() => completeSet(s)} />
+                  <SetRow
+                    key={s.id}
+                    set={s}
+                    metric={metric}
+                    live={live}
+                    holding={hold?.setId === s.id}
+                    onToggle={() => completeSet(s)}
+                    onStartHold={() => {
+                      setRestEndsAt(undefined);
+                      setHold({ setId: s.id, startedAt: Date.now(), total: s.durationSec ?? s.targetRepMax ?? 30, restSeconds: live ? s.restSeconds : undefined });
+                    }}
+                  />
                 ))}
               </div>
               <div className="flex border-t border-white/[0.05]">
@@ -207,11 +259,20 @@ export default function SessionPage() {
         </Card>
       )}
 
-      {/* Bottom bar: rest timer + finish */}
+      {/* Bottom bar: hold timer / rest timer + finish */}
       {live && (
         <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-white/[0.06] bg-ink-900/90 px-4 pt-3 backdrop-blur-2xl">
           <div className="mx-auto flex max-w-xl items-center gap-2">
-            {restEndsAt ? (
+            {hold ? (
+              <div className="flex flex-1 items-center gap-2 rounded-2xl bg-lime-400 px-3 py-2 text-ink-950">
+                <Play className="size-5" fill="currentColor" />
+                <span className="font-display text-xl font-bold tabular-nums">{clock(hold.total - holdElapsed)}</span>
+                <span className="truncate text-xs font-medium">{exercises[allSets.find((s) => s.id === hold.setId)?.exerciseId ?? ""]?.name}</span>
+                <button aria-label="Stop dan simpan" className="ml-auto rounded-lg bg-black/15 p-1.5" onClick={() => finishHold(hold, holdElapsed)}>
+                  <Square className="size-4" fill="currentColor" />
+                </button>
+              </div>
+            ) : restEndsAt ? (
               <div className="flex flex-1 items-center gap-2 rounded-2xl bg-lime-400/10 px-3 py-2">
                 <Timer className="size-5 text-lime-400" />
                 <span className="font-display text-xl font-bold tabular-nums text-lime-300">{clock(restLeft)}</span>
@@ -239,6 +300,19 @@ export default function SessionPage() {
         }}
       />
 
+      <TechniqueSheet exercise={techniqueFor ? exercises[techniqueFor] : undefined} exerciseId={techniqueFor} onClose={() => setTechniqueFor(undefined)} />
+
+      <SwapSheet
+        from={swapFor ? exercises[swapFor] : undefined}
+        candidates={swapFor && exercises[swapFor] ? swapCandidates(exercises[swapFor], Object.values(exercises), setup.equipment) : []}
+        onClose={() => setSwapFor(undefined)}
+        onPick={async (toId) => {
+          await swapSessionExercise(session.id, swapFor!, toId);
+          setSwapFor(undefined);
+          toast("Latihan diganti");
+        }}
+      />
+
       <FinishSheet
         open={finishOpen}
         onClose={() => setFinishOpen(false)}
@@ -256,21 +330,32 @@ export default function SessionPage() {
   );
 }
 
-function clock(totalSeconds: number) {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  const mm = String(m).padStart(2, "0");
-  const ss = String(s).padStart(2, "0");
-  return h ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
-}
-
 function Summary({ label, value }: { label: string; value: string }) {
   return (
     <Card className="p-3 text-center">
       <div className="font-display text-lg font-bold tabular-nums">{value}</div>
       <div className="text-[11px] text-ink-400">{label}</div>
     </Card>
+  );
+}
+
+const GRID: Record<ExerciseMetric, string> = {
+  reps: "grid-cols-[28px_1fr_1fr_56px_44px]",
+  time: "grid-cols-[28px_1fr_56px_44px_44px]",
+  cardio: "grid-cols-[28px_1fr_1fr_56px_44px]",
+};
+
+function SetHeader({ metric }: { metric: ExerciseMetric }) {
+  const cols = metric === "reps" ? ["kg", "Rep", "RPE", ""] : metric === "time" ? ["Detik", "RPE", "", ""] : ["Menit", "km", "RPE", ""];
+  return (
+    <div className={cx("grid items-center gap-1.5 px-3 pb-1 text-[10px] uppercase tracking-wide text-ink-500", GRID[metric])}>
+      <span className="text-center">Set</span>
+      {cols.map((c, i) => (
+        <span key={i} className="text-center">
+          {c}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -300,7 +385,7 @@ function Cell({
     <input
       ref={ref}
       inputMode={inputMode}
-      className="h-11 w-full rounded-xl border border-white/[0.06] bg-ink-800 text-center tabular-nums outline-none focus:border-lime-400/60"
+      className="h-11 w-full min-w-0 rounded-xl border border-white/[0.06] bg-ink-800 text-center tabular-nums outline-none focus:border-lime-400/60"
       value={draft}
       placeholder={placeholder}
       onChange={(e) => {
@@ -311,23 +396,78 @@ function Cell({
   );
 }
 
-function SetRow({ set: s, onToggle }: { set: WorkoutSet; onToggle: () => void }) {
+function SetRow({
+  set: s,
+  metric,
+  live,
+  holding,
+  onToggle,
+  onStartHold,
+}: {
+  set: WorkoutSet;
+  metric: ExerciseMetric;
+  live: boolean;
+  holding: boolean;
+  onToggle: () => void;
+  onStartHold: () => void;
+}) {
+  const range = s.targetRepMax ? (s.targetRepMin && s.targetRepMin !== s.targetRepMax ? `${s.targetRepMin}-${s.targetRepMax}` : `${s.targetRepMax}`) : "—";
+  const rpe = (
+    <Cell inputMode="decimal" value={s.rpe} placeholder="RPE" onValue={(v) => updateSet(s.id, { rpe: v != null ? Math.min(10, Math.max(1, v)) : undefined })} />
+  );
+  let inputs;
+  switch (metric) {
+    case "reps":
+      inputs = (
+        <>
+          <Cell inputMode="decimal" value={s.weightKg} placeholder="—" onValue={(v) => updateSet(s.id, { weightKg: v })} />
+          <Cell inputMode="numeric" value={s.reps} placeholder={range} onValue={(v) => updateSet(s.id, { reps: v })} />
+          {rpe}
+        </>
+      );
+      break;
+    case "time":
+      inputs = (
+        <>
+          <Cell inputMode="numeric" value={s.durationSec} placeholder={range} onValue={(v) => updateSet(s.id, { durationSec: v })} />
+          {rpe}
+          <button
+            aria-label="Mulai timer"
+            disabled={!live || s.completed || holding}
+            onClick={onStartHold}
+            className={cx(
+              "grid h-11 w-11 place-items-center rounded-xl border border-white/10 transition active:scale-95 disabled:opacity-30",
+              holding ? "bg-lime-400/20 text-lime-300" : "bg-ink-800 text-lime-400",
+            )}
+          >
+            <Play className="size-4" fill="currentColor" />
+          </button>
+        </>
+      );
+      break;
+    case "cardio":
+      inputs = (
+        <>
+          <Cell
+            inputMode="decimal"
+            value={s.durationSec != null ? Math.round((s.durationSec / 60) * 10) / 10 : undefined}
+            placeholder={range}
+            onValue={(v) => updateSet(s.id, { durationSec: v != null ? Math.round(v * 60) : undefined })}
+          />
+          <Cell inputMode="decimal" value={s.distanceKm} placeholder="km" onValue={(v) => updateSet(s.id, { distanceKm: v })} />
+          {rpe}
+        </>
+      );
+      break;
+    default: {
+      const never: never = metric;
+      throw new Error(`Unknown metric ${never}`);
+    }
+  }
   return (
-    <div className={cx("grid grid-cols-[28px_1fr_1fr_56px_44px] items-center gap-1.5", s.skipped && "opacity-40")}>
+    <div className={cx("grid items-center gap-1.5", GRID[metric], s.skipped && "opacity-40")}>
       <span className={cx("text-center text-sm font-bold", s.completed ? "text-lime-400" : "text-ink-400")}>{s.setNumber}</span>
-      <Cell inputMode="decimal" value={s.weightKg} placeholder="—" onValue={(v) => updateSet(s.id, { weightKg: v })} />
-      <Cell
-        inputMode="numeric"
-        value={s.reps}
-        placeholder={s.targetRepMax ? `${s.targetRepMin}-${s.targetRepMax}` : "—"}
-        onValue={(v) => updateSet(s.id, { reps: v })}
-      />
-      <Cell
-        inputMode="decimal"
-        value={s.rpe}
-        placeholder="RPE"
-        onValue={(v) => updateSet(s.id, { rpe: v != null ? Math.min(10, Math.max(1, v)) : undefined })}
-      />
+      {inputs}
       <button
         aria-label={s.completed ? "Batalkan set" : "Set selesai"}
         onClick={onToggle}
@@ -339,6 +479,49 @@ function SetRow({ set: s, onToggle }: { set: WorkoutSet; onToggle: () => void })
         <Check className="size-5" strokeWidth={3} />
       </button>
     </div>
+  );
+}
+
+function TechniqueSheet({ exercise, exerciseId, onClose }: { exercise?: Exercise; exerciseId?: string; onClose: () => void }) {
+  return (
+    <Sheet open={!!exerciseId} onClose={onClose} title={exercise?.name ?? "Teknik"}>
+      {exerciseId && <ExerciseAnimation exerciseId={exerciseId} className="mx-auto max-w-xs" />}
+      {exercise?.instructions && <p className="mt-3 text-sm leading-relaxed text-ink-300">{exercise.instructions}</p>}
+      {!!exercise?.cues?.length && (
+        <ul className="mt-3 space-y-1.5">
+          {exercise.cues.map((c) => (
+            <li key={c} className="flex items-start gap-2 text-sm">
+              <Check className="mt-0.5 size-4 shrink-0 text-lime-400" strokeWidth={3} />
+              {c}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Sheet>
+  );
+}
+
+function SwapSheet({ from, candidates, onClose, onPick }: { from?: Exercise; candidates: Exercise[]; onClose: () => void; onPick: (id: string) => void }) {
+  return (
+    <Sheet open={!!from} onClose={onClose} title={`Ganti ${from?.name ?? ""}`}>
+      <p className="mb-2 text-sm text-ink-400">Set yang sudah selesai tetap tercatat. Set sisanya pindah ke latihan pengganti.</p>
+      {!candidates.length && <p className="py-6 text-center text-sm text-ink-400">Tidak ada pengganti dengan alat yang kamu punya.</p>}
+      <div className="divide-y divide-white/[0.05]">
+        {candidates.map((e) => (
+          <button key={e.id} onClick={() => onPick(e.id)} className="flex w-full items-center gap-3 py-2.5 text-left active:bg-white/5">
+            <ExerciseThumb exerciseId={e.id} size={52} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium">{e.name}</div>
+              <div className="truncate text-xs text-ink-400">
+                {e.primaryMuscle} · {EQUIPMENT_LABEL[e.equipment]}
+                {from?.alternatives.includes(e.id) && " · disarankan"}
+              </div>
+            </div>
+            <Repeat className="size-4 shrink-0 text-lime-400" />
+          </button>
+        ))}
+      </div>
+    </Sheet>
   );
 }
 

@@ -1,18 +1,18 @@
 import { db } from "../db";
-import type { Exercise, ProgramDay, ProgramExercise, TrainingProgram, WorkoutSession, WorkoutSet } from "../types";
+import type { Equipment, Exercise, ExerciseMetric, ProgramDay, ProgramExercise, TrainingProgram, WorkoutSession, WorkoutSet } from "../types";
 import { newId } from "../../lib/id";
 import { nowIso, todayLocal } from "../../lib/date";
 import { EXERCISE_SEED } from "../../data/exercises";
-import { PROGRAM_TEMPLATES } from "../../data/programTemplates";
+import { daysPerWeek, PROGRAM_TEMPLATES } from "../../data/programTemplates";
+import { defaultTargets, metricOf } from "../../lib/sets";
 
-/** Seeds the library once; user-made custom exercises are never overwritten. */
+/** Keeps built-in exercises in sync with the app version; user-made custom exercises are never touched. */
 export async function ensureExerciseSeed() {
   const now = nowIso();
-  const existing = new Set(await db.exerciseLibrary.toCollection().primaryKeys());
-  const missing = EXERCISE_SEED.filter((e) => !existing.has(e.id));
-  if (missing.length) {
-    await db.exerciseLibrary.bulkAdd(missing.map((e) => ({ ...e, isCustom: false, createdAt: now })));
-  }
+  const existing = new Map((await db.exerciseLibrary.toArray()).map((e) => [e.id, e]));
+  await db.exerciseLibrary.bulkPut(
+    EXERCISE_SEED.map((e) => ({ ...e, isCustom: false, createdAt: existing.get(e.id)?.createdAt ?? now })),
+  );
 }
 
 export async function listExercises(): Promise<Exercise[]> {
@@ -78,7 +78,7 @@ export async function createProgramFromTemplate(key: string): Promise<string> {
       name: t.name,
       goal: t.description,
       split: t.split,
-      daysPerWeek: t.daysPerWeek,
+      daysPerWeek: daysPerWeek(t),
       startDate: todayLocal(),
       status: "inactive",
       deloadActive: false,
@@ -164,16 +164,16 @@ export async function deleteProgramDay(id: string) {
 }
 
 export async function addProgramExercise(programDayId: string, exerciseId: string) {
-  const count = await db.programExercises.where("programDayId").equals(programDayId).count();
+  const [count, ex] = await Promise.all([
+    db.programExercises.where("programDayId").equals(programDayId).count(),
+    db.exerciseLibrary.get(exerciseId),
+  ]);
   await db.programExercises.add({
     id: newId(),
     programDayId,
     exerciseId,
     order: count,
-    targetSets: 3,
-    repMin: 8,
-    repMax: 12,
-    restSeconds: 90,
+    ...defaultTargets(metricOf(ex)),
   });
 }
 
@@ -255,13 +255,14 @@ export async function startSession(programDayId?: string): Promise<string> {
   const day = programDayId ? await db.programDays.get(programDayId) : undefined;
   const program = day ? await db.trainingPrograms.get(day.programId) : undefined;
   const planned = day ? await db.programExercises.where("programDayId").equals(day.id).sortBy("order") : [];
+  const library = await exerciseMap();
 
   const sets: WorkoutSet[] = [];
   for (const pe of planned) {
     const last = await lastPerformance(pe.exerciseId);
     const lastWeight = last?.sets.filter((s) => s.completed && s.weightKg != null).at(-1)?.weightKg;
     const deload = program?.deloadActive ?? false;
-    const baseWeight = pe.targetWeightKg ?? lastWeight;
+    const baseWeight = metricOf(library[pe.exerciseId]) === "reps" ? (pe.targetWeightKg ?? lastWeight) : pe.targetWeightKg;
     const setCount = deload ? Math.max(1, Math.ceil(pe.targetSets / 2)) : pe.targetSets;
     for (let n = 1; n <= setCount; n++) {
       sets.push({
@@ -328,6 +329,8 @@ export async function addSet(sessionId: string, exerciseId: string) {
     targetRepMax: prev?.targetRepMax,
     weightKg: prev?.weightKg,
     reps: prev?.reps,
+    durationSec: prev?.durationSec,
+    distanceKm: prev?.distanceKm,
     restSeconds: prev?.restSeconds ?? 90,
     completed: false,
     skipped: false,
@@ -342,18 +345,74 @@ export async function deleteSet(id: string) {
 export async function addExerciseToSession(sessionId: string, exerciseId: string) {
   const all = await db.workoutSets.where("sessionId").equals(sessionId).toArray();
   const maxOrder = all.reduce((m, s) => Math.max(m, s.exerciseOrder), -1);
-  const last = await lastPerformance(exerciseId, sessionId);
+  const [last, ex] = await Promise.all([lastPerformance(exerciseId, sessionId), db.exerciseLibrary.get(exerciseId)]);
+  const t = defaultTargets(metricOf(ex));
   await db.workoutSets.add({
     id: newId(),
     sessionId,
     exerciseId,
     exerciseOrder: maxOrder + 1,
     setNumber: 1,
+    targetRepMin: t.repMin,
+    targetRepMax: t.repMax,
     weightKg: last?.sets.at(-1)?.weightKg,
-    restSeconds: 90,
+    restSeconds: t.restSeconds,
     completed: false,
     skipped: false,
     createdAt: nowIso(),
+  });
+}
+
+const muscleGroup = (m: string) => m.toLowerCase().split(/[ (]/)[0];
+
+/**
+ * Replacement suggestions: listed alternatives first, then same pattern working related muscles;
+ * other same-pattern moves only pad a short list. Only exercises usable with the given equipment.
+ */
+export function swapCandidates(from: Exercise, all: Exercise[], equipment: Equipment[]): Exercise[] {
+  const fromSecondary = from.secondaryMuscles.map((m) => m.toLowerCase());
+  const related = (e: Exercise) =>
+    muscleGroup(e.primaryMuscle) === muscleGroup(from.primaryMuscle) ||
+    e.secondaryMuscles.some((m) => m.toLowerCase() === from.primaryMuscle.toLowerCase()) ||
+    fromSecondary.includes(e.primaryMuscle.toLowerCase());
+  const rank = (e: Exercise) =>
+    from.alternatives.includes(e.id) ? 0 : e.pattern !== from.pattern ? 3 : related(e) ? 1 : 2;
+  const ranked = all
+    .filter((e) => e.id !== from.id && equipment.includes(e.equipment) && rank(e) < 3)
+    .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  const close = ranked.filter((e) => rank(e) < 2);
+  return (close.length >= 5 ? close : ranked).slice(0, 12);
+}
+
+/** Swaps the not-yet-completed sets of an exercise for another one; completed sets stay as history. */
+export async function swapSessionExercise(sessionId: string, fromId: string, toId: string) {
+  const [sets, existing, to, last] = await Promise.all([
+    db.workoutSets.where("[sessionId+exerciseId]").equals([sessionId, fromId]).sortBy("setNumber"),
+    db.workoutSets.where("[sessionId+exerciseId]").equals([sessionId, toId]).count(),
+    db.exerciseLibrary.get(toId),
+    lastPerformance(toId, sessionId),
+  ]);
+  const pending = sets.filter((s) => !s.completed);
+  if (!pending.length) return;
+  const from = await db.exerciseLibrary.get(fromId);
+  const sameMetric = metricOf(from) === metricOf(to);
+  const t = defaultTargets(metricOf(to));
+  const lastWeight = last?.sets.filter((s) => s.completed && s.weightKg != null).at(-1)?.weightKg;
+  await db.transaction("rw", db.workoutSets, async () => {
+    for (const [i, s] of pending.entries()) {
+      await db.workoutSets.update(s.id, {
+        exerciseId: toId,
+        setNumber: existing + i + 1,
+        weightKg: lastWeight,
+        reps: undefined,
+        rpe: undefined,
+        durationSec: undefined,
+        distanceKm: undefined,
+        skipped: false,
+        targetRepMin: sameMetric ? s.targetRepMin : t.repMin,
+        targetRepMax: sameMetric ? s.targetRepMax : t.repMax,
+      });
+    }
   });
 }
 
@@ -395,11 +454,16 @@ export async function exerciseHistory(exerciseId: string) {
         undefined,
       );
       const best1rm = Math.max(0, ...ss.map((s) => (s.weightKg && s.reps ? estimate1RM(s.weightKg, s.reps) : 0)));
-      return { session, sets: ss, topSet, volume: ss.reduce((v, s) => v + setVolume(s), 0), best1rm };
+      const bestDuration = Math.max(0, ...ss.map((s) => s.durationSec ?? 0));
+      const totalDuration = ss.reduce((v, s) => v + (s.durationSec ?? 0), 0);
+      const distanceKm = ss.reduce((v, s) => v + (s.distanceKm ?? 0), 0);
+      return { session, sets: ss, topSet, volume: ss.reduce((v, s) => v + setVolume(s), 0), best1rm, bestDuration, totalDuration, distanceKm };
     });
   const pbWeight = Math.max(0, ...rows.map((r) => r.topSet?.weightKg ?? 0));
   const pb1rm = Math.max(0, ...rows.map((r) => r.best1rm));
-  return { rows, pbWeight, pb1rm };
+  const pbDuration = Math.max(0, ...rows.map((r) => r.bestDuration));
+  const pbDistance = Math.max(0, ...rows.map((r) => r.distanceKm));
+  return { rows, pbWeight, pb1rm, pbDuration, pbDistance };
 }
 
 export type ProgressionHint =
@@ -414,6 +478,7 @@ export type ProgressionHint =
 export function progressionHint(
   last: Awaited<ReturnType<typeof lastPerformance>>,
   target: { repMax?: number; targetSets?: number },
+  metric: ExerciseMetric = "reps",
 ): ProgressionHint | undefined {
   if (!last) return undefined;
   if (last.session.hadPain) {
@@ -422,10 +487,30 @@ export function progressionHint(
   if (last.session.isDeload) return { kind: "hold", message: "Sesi terakhir deload — kembali ke beban normal sebelumnya." };
   const done = last.sets.filter((s) => s.completed);
   if (!done.length || !target.repMax) return undefined;
-  const allTop = done.length >= (target.targetSets ?? 1) && done.every((s) => (s.reps ?? 0) >= target.repMax!);
   const highRpe = done.some((s) => (s.rpe ?? 0) >= 9.5);
-  if (allTop && !highRpe) {
-    return { kind: "increase", message: "Semua set mencapai batas atas repetisi. Pertimbangkan +2,5 kg (atau +1 repetisi) jika teknik tetap baik." };
+  const enoughSets = done.length >= (target.targetSets ?? 1);
+  switch (metric) {
+    case "reps": {
+      const allTop = enoughSets && done.every((s) => (s.reps ?? 0) >= target.repMax!);
+      if (allTop && !highRpe) {
+        return { kind: "increase", message: "Semua set mencapai batas atas repetisi. Pertimbangkan +2,5 kg (atau +1 repetisi) jika teknik tetap baik." };
+      }
+      return { kind: "hold", message: "Pertahankan beban, kejar repetisi sampai batas atas di semua set." };
+    }
+    case "time": {
+      const allTop = enoughSets && done.every((s) => (s.durationSec ?? 0) >= target.repMax!);
+      if (allTop && !highRpe) {
+        return { kind: "increase", message: "Semua set mencapai target waktu. Tambah 5–10 detik atau pilih variasi yang lebih berat." };
+      }
+      return { kind: "hold", message: "Kejar target waktu di semua set dengan teknik rapi." };
+    }
+    case "cardio":
+      return highRpe
+        ? { kind: "hold", message: "Sesi terakhir terasa sangat berat. Pertahankan durasi/intensitas dulu." }
+        : { kind: "increase", message: "Naikkan bertahap: +5 menit atau sedikit lebih cepat (maks ±10% per minggu)." };
+    default: {
+      const never: never = metric;
+      throw new Error(`Unknown metric ${never}`);
+    }
   }
-  return { kind: "hold", message: "Pertahankan beban, kejar repetisi sampai batas atas di semua set." };
 }

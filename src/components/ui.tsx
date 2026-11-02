@@ -249,6 +249,21 @@ export function Segmented<T extends string>({
   );
 }
 
+export function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cx(
+        "shrink-0 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium transition",
+        active ? "border-lime-400 bg-lime-400 text-ink-950" : "border-white/[0.08] bg-ink-850 text-ink-300 active:bg-white/5",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) {
   return (
     <button type="button" onClick={() => onChange(!checked)} className="flex w-full items-center gap-3 py-2 text-left">
