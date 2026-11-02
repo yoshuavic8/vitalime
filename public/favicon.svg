@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  
+  <defs>
+    <clipPath id="leafClip"><path d="M286 742 C 270 470 452 286 770 258 C 772 560 594 748 286 742 Z"/></clipPath>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0" stop-color="#1A2108"/>
+      <stop offset="0.55" stop-color="#0B0D06"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="leaf" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#8BE000"/>
+      <stop offset="1" stop-color="#C6FF3D"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  
+  <g>
+    <path d="M300 736 L 236 800" stroke="#8BE000" stroke-width="42" stroke-linecap="round"/>
+    <path d="M286 742 C 270 470 452 286 770 258 C 772 560 594 748 286 742 Z" fill="url(#leaf)"/>
+    <path d="M206 560 H 402 L 452 470 L 530 650 L 590 512 L 626 560 H 820"
+          fill="none" stroke="#050505" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"
+          clip-path="url(#leafClip)"/>
+  </g>
+</svg>

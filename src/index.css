@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink-950: #050505;
+  --color-ink-900: #0b0b0c;
+  --color-ink-850: #111113;
+  --color-ink-800: #17171a;
+  --color-ink-700: #222226;
+  --color-ink-600: #2e2e33;
+  --color-ink-500: #4a4a52;
+  --color-ink-400: #7a7a85;
+  --color-ink-300: #a6a6b0;
+  --color-ink-100: #ececf0;
+
+  --color-lime-300: #dcff8a;
+  --color-lime-400: #c6ff3d;
+  --color-lime-500: #a8f000;
+  --color-lime-600: #8be000;
+  --color-lime-900: #1b2406;
+
+  --color-protein: #7dd3fc;
+  --color-carbs: #fbbf24;
+  --color-fat: #f472b6;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto,
+    sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", sans-serif;
+}
+
+:root {
+  color-scheme: dark;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  background: var(--color-ink-950);
+}
+
+body {
+  margin: 0;
+  color: var(--color-ink-100);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* iOS zooms into inputs below 16px. */
+input,
+select,
+textarea {
+  font-size: 16px;
+}
+
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 12px);
+}
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 12px);
+}
+.pb-tabbar {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 96px);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.glow-lime {
+  box-shadow:
+    0 0 0 1px rgb(198 255 61 / 0.25),
+    0 10px 40px -10px rgb(198 255 61 / 0.45);
+}
+
+.bg-lime-radial {
+  background:
+    radial-gradient(120% 80% at 0% 0%, rgb(198 255 61 / 0.16), transparent 55%),
+    radial-gradient(90% 60% at 100% 0%, rgb(139 224 0 / 0.08), transparent 60%),
+    var(--color-ink-850);
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-sheet-up {
+  animation: sheet-up 0.28s cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
